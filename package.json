@@ -1,0 +1,38 @@
+{
+  "name": "@paperclipai/adapter-copilot-local",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Copilot CLI adapter for Paperclip — run GitHub Copilot as an autonomous agent",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/adapter-utils": "^0.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
