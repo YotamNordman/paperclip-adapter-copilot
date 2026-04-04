@@ -1,4 +1,7 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type {
   AdapterExecutionContext,
   AdapterExecutionResult,
@@ -12,10 +15,14 @@ import {
   buildPaperclipEnv,
   ensureAbsoluteDirectory,
   ensureCommandResolvable,
+  readPaperclipRuntimeSkillEntries,
   renderTemplate,
   runChildProcess,
 } from '@paperclipai/adapter-utils/server-utils';
 import { parseCopilotStreamJson } from './parse.js';
+import { resolveCopilotDesiredSkillNames } from './skills.js';
+
+const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_COMMAND = 'copilot';
 const DEFAULT_MAX_TURNS = 50;
@@ -23,6 +30,30 @@ const DEFAULT_TIMEOUT_SEC = 600;
 const DEFAULT_GRACE_SEC = 10;
 const DEFAULT_PROMPT_TEMPLATE =
   'You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.';
+
+/**
+ * Create a temp directory with .github/skills/ containing symlinks to
+ * desired Paperclip skills, so --add-dir makes Copilot CLI discover them.
+ */
+async function buildSkillsDir(config: Record<string, unknown>): Promise<string | null> {
+  const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+  if (availableEntries.length === 0) return null;
+
+  const desiredNames = new Set(resolveCopilotDesiredSkillNames(config, availableEntries));
+  const hasDesired = availableEntries.some((e) => desiredNames.has(e.key));
+  if (!hasDesired) return null;
+
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'paperclip-copilot-skills-'));
+  const target = path.join(tmp, '.github', 'skills');
+  await fs.mkdir(target, { recursive: true });
+
+  for (const entry of availableEntries) {
+    if (!desiredNames.has(entry.key)) continue;
+    await fs.symlink(entry.source, path.join(target, entry.runtimeName));
+  }
+
+  return tmp;
+}
 
 function buildCopilotArgs(opts: {
   resumeSessionId: string | null;
@@ -34,6 +65,7 @@ function buildCopilotArgs(opts: {
   agent: string;
   additionalMcpConfig: string;
   noCustomInstructions: boolean;
+  skillsDir: string | null;
   extraArgs: string[];
 }): string[] {
   const args = ['-p', '-', '--output-format', 'json', '-s', '--allow-all', '--autopilot'];
@@ -54,6 +86,9 @@ function buildCopilotArgs(opts: {
   }
   if (opts.additionalMcpConfig) {
     args.push('--additional-mcp-config', opts.additionalMcpConfig);
+  }
+  if (opts.skillsDir) {
+    args.push('--add-dir', opts.skillsDir);
   }
   if (opts.extraArgs.length > 0) args.push(...opts.extraArgs);
 
@@ -120,6 +155,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     context,
   });
 
+  // --- mount desired skills into temp dir ---
+  const skillsDir = await buildSkillsDir(config);
+
   // --- build CLI args ---
   const args = buildCopilotArgs({
     resumeSessionId,
@@ -131,6 +169,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     agent: agentFlag,
     additionalMcpConfig,
     noCustomInstructions,
+    skillsDir,
     extraArgs,
   });
 
@@ -149,6 +188,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   // --- parse output ---
   const parsed = parseCopilotStreamJson(proc.stdout);
+
+  // --- cleanup temp skills dir ---
+  if (skillsDir) {
+    fs.rm(skillsDir, { recursive: true, force: true }).catch(() => {});
+  }
 
   // --- build session params for resume ---
   const resolvedSessionId = parsed.sessionId ?? resumeSessionId;
