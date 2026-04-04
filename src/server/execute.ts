@@ -63,13 +63,13 @@ function buildCopilotArgs(opts: {
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const { runId, agent, runtime, config, context } = ctx;
 
-  // --- resolve config ---
+  // --- resolve config (with validation) ---
   const command = asString(config.command, DEFAULT_COMMAND);
   const model = asString(config.model, '');
   const effort = asString(config.effort, '');
-  const maxTurns = asNumber(config.maxTurnsPerRun, DEFAULT_MAX_TURNS);
-  const timeoutSec = asNumber(config.timeoutSec, DEFAULT_TIMEOUT_SEC);
-  const graceSec = asNumber(config.graceSec, DEFAULT_GRACE_SEC);
+  const maxTurns = Math.max(0, asNumber(config.maxTurnsPerRun, DEFAULT_MAX_TURNS));
+  const timeoutSec = Math.max(1, asNumber(config.timeoutSec, DEFAULT_TIMEOUT_SEC));
+  const graceSec = Math.max(1, asNumber(config.graceSec, DEFAULT_GRACE_SEC));
   const agentFlag = asString(config.agent, '');
   const noCustomInstructions = asBoolean(config.noCustomInstructions, false);
   const availableTools = asStringArray(config.availableTools);
@@ -103,12 +103,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   // --- build MCP config override ---
   const mcpConfigRaw = config.additionalMcpConfig;
-  const additionalMcpConfig =
-    typeof mcpConfigRaw === 'string'
-      ? mcpConfigRaw
-      : typeof mcpConfigRaw === 'object' && mcpConfigRaw !== null
-        ? JSON.stringify(mcpConfigRaw)
-        : '';
+  let additionalMcpConfig = '';
+  if (typeof mcpConfigRaw === 'string') {
+    additionalMcpConfig = mcpConfigRaw;
+  } else if (typeof mcpConfigRaw === 'object' && mcpConfigRaw !== null) {
+    try {
+      additionalMcpConfig = JSON.stringify(mcpConfigRaw);
+    } catch {
+      // Non-serializable config — skip silently
+    }
+  }
 
   // --- build prompt ---
   const prompt = renderTemplate(promptTemplate, {
@@ -157,15 +161,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     exitCode: proc.exitCode,
     signal: proc.signal,
     timedOut: proc.timedOut ?? false,
-    errorMessage: (proc.exitCode ?? 0) === 0 ? null : parsed.errorMessage,
+    errorMessage: (proc.exitCode ?? 0) === 0 ? null : (parsed.errorMessage ?? 'Process exited with non-zero code'),
     usage: parsed.usage ?? undefined,
     sessionId: resolvedSessionId,
     sessionParams: resolvedSessionParams,
     sessionDisplayId: resolvedSessionId,
     provider: 'github',
-    model: parsed.model || model,
+    model: parsed.model || model || undefined,
     billingType: 'subscription',
-    costUsd: 0,
     resultJson: parsed.resultJson,
     summary: parsed.summary,
   };

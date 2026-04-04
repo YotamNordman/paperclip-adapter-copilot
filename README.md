@@ -49,11 +49,14 @@ pnpm add @paperclipai/adapter-copilot-local
 | `availableTools` | string[] | all | Tool whitelist |
 | `excludedTools` | string[] | none | Tool blacklist |
 | `agent` | string | — | Custom agent name (`--agent` flag) |
-| `additionalMcpConfig` | object | — | Extra MCP servers to inject |
+| `additionalMcpConfig` | object/string | — | Extra MCP servers to inject |
 | `noCustomInstructions` | boolean | `false` | Disable AGENTS.md loading |
+| `promptTemplate` | string | — | Prompt template with `{{agent.id}}` and `{{agent.name}}` |
 | `cwd` | string | — | Working directory |
 | `timeoutSec` | number | `600` | Max wall-clock seconds |
+| `graceSec` | number | `10` | SIGTERM grace period seconds |
 | `extraArgs` | string[] | — | Additional CLI flags |
+| `env` | object | — | Extra environment variables |
 
 ## Development
 

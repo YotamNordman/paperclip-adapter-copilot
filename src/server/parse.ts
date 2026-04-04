@@ -3,12 +3,12 @@ import type { UsageSummary } from '@paperclipai/adapter-utils';
 export interface CopilotStreamResult {
   sessionId: string | null;
   model: string;
-  costUsd: number | null;
   usage: UsageSummary | null;
   summary: string;
   resultJson: Record<string, unknown> | null;
   errorMessage: string | null;
   premiumRequests: number;
+  sessionDurationMs: number;
   codeChanges: {
     linesAdded: number;
     linesRemoved: number;
@@ -35,15 +35,26 @@ function num(value: unknown, fallback = 0): number {
   return typeof value === 'number' ? value : fallback;
 }
 
+function obj(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/** Update sessionId only if the event carries a non-empty one. */
+function pickSessionId(event: Record<string, unknown>, current: string | null): string | null {
+  const candidate = str(event.sessionId);
+  return candidate.length > 0 ? candidate : current;
+}
+
 /**
  * Parse Copilot CLI JSON stream output (one JSON object per line).
  *
- * Event types we care about:
- * - session.mcp_servers_loaded — MCP status (informational)
- * - user.message              — echoed prompt
- * - assistant.message         — agent response text + tool requests
- * - assistant.turn_start/end  — turn boundaries
- * - result                    — final summary with sessionId, usage, exitCode
+ * Event types:
+ * - session.tools_updated  — model selection
+ * - assistant.message      — agent response text
+ * - result                 — final summary with sessionId, usage, exitCode
+ * - error                  — execution error
  */
 export function parseCopilotStreamJson(stdout: string): CopilotStreamResult {
   let sessionId: string | null = null;
@@ -60,9 +71,7 @@ export function parseCopilotStreamJson(stdout: string): CopilotStreamResult {
     if (!event) continue;
 
     const type = str(event.type);
-    const data = typeof event.data === 'object' && event.data !== null
-      ? event.data as Record<string, unknown>
-      : null;
+    const data = obj(event.data);
 
     switch (type) {
       case 'session.tools_updated': {
@@ -74,16 +83,14 @@ export function parseCopilotStreamJson(stdout: string): CopilotStreamResult {
         if (data) {
           const content = str(data.content);
           if (content) assistantTexts.push(content);
-
-          // Track output tokens per message
-          sessionId = str(event.sessionId, sessionId ?? '') || sessionId;
         }
+        sessionId = pickSessionId(event, sessionId);
         break;
       }
 
       case 'result': {
         resultEvent = event;
-        sessionId = str(event.sessionId, sessionId ?? '') || sessionId;
+        sessionId = pickSessionId(event, sessionId);
         break;
       }
 
@@ -96,66 +103,43 @@ export function parseCopilotStreamJson(stdout: string): CopilotStreamResult {
     }
   }
 
-  // Extract usage from the result event
-  const usage = extractUsage(resultEvent);
-  const codeChanges = extractCodeChanges(resultEvent);
-  const premiumRequests = extractPremiumRequests(resultEvent);
-
-  if (resultEvent) {
-    sessionId = str(resultEvent.sessionId, sessionId ?? '') || sessionId;
-  }
+  const usageObj = resultEvent ? obj(resultEvent.usage) : null;
 
   return {
     sessionId,
     model,
-    costUsd: 0,
-    usage,
+    usage: extractUsage(usageObj),
     summary: assistantTexts.join('\n\n').trim(),
     resultJson: resultEvent,
     errorMessage,
-    premiumRequests,
-    codeChanges,
+    premiumRequests: usageObj ? num(usageObj.premiumRequests) : 0,
+    sessionDurationMs: usageObj ? num(usageObj.sessionDurationMs) : 0,
+    codeChanges: extractCodeChanges(usageObj),
   };
 }
 
-function extractUsage(resultEvent: Record<string, unknown> | null): UsageSummary | null {
-  if (!resultEvent) return null;
-
-  const usageObj = typeof resultEvent.usage === 'object' && resultEvent.usage !== null
-    ? resultEvent.usage as Record<string, unknown>
-    : null;
-
+/**
+ * Map Copilot usage to UsageSummary.
+ *
+ * Copilot CLI does not report raw token counts. It reports `premiumRequests`
+ * (number of API round-trips) and `totalApiDurationMs`. We store these as-is
+ * in the inputTokens/outputTokens fields since Paperclip only uses them for
+ * relative cost tracking, not billing.
+ */
+function extractUsage(usageObj: Record<string, unknown> | null): UsageSummary | null {
   if (!usageObj) return null;
-
-  // Copilot reports premiumRequests rather than raw tokens.
-  // Map premiumRequests to inputTokens as a proxy metric.
   return {
-    inputTokens: num(usageObj.premiumRequests) * 1000,
-    outputTokens: num(usageObj.totalApiDurationMs),
+    inputTokens: num(usageObj.premiumRequests),
+    outputTokens: 0,
   };
 }
 
-function extractPremiumRequests(resultEvent: Record<string, unknown> | null): number {
-  if (!resultEvent) return 0;
-  const usageObj = typeof resultEvent.usage === 'object' && resultEvent.usage !== null
-    ? resultEvent.usage as Record<string, unknown>
-    : null;
-  return usageObj ? num(usageObj.premiumRequests) : 0;
-}
+function extractCodeChanges(usageObj: Record<string, unknown> | null): CopilotStreamResult['codeChanges'] {
+  const empty = { linesAdded: 0, linesRemoved: 0, filesModified: [] as string[] };
+  if (!usageObj) return empty;
 
-function extractCodeChanges(resultEvent: Record<string, unknown> | null): CopilotStreamResult['codeChanges'] {
-  const defaults = { linesAdded: 0, linesRemoved: 0, filesModified: [] as string[] };
-  if (!resultEvent) return defaults;
-
-  const usageObj = typeof resultEvent.usage === 'object' && resultEvent.usage !== null
-    ? resultEvent.usage as Record<string, unknown>
-    : null;
-  if (!usageObj) return defaults;
-
-  const changes = typeof usageObj.codeChanges === 'object' && usageObj.codeChanges !== null
-    ? usageObj.codeChanges as Record<string, unknown>
-    : null;
-  if (!changes) return defaults;
+  const changes = obj(usageObj.codeChanges);
+  if (!changes) return empty;
 
   return {
     linesAdded: num(changes.linesAdded),

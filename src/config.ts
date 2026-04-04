@@ -29,6 +29,7 @@ Environment:
 Operational:
 - timeoutSec (number, optional): max wall-clock seconds per run (default: 600)
 - graceSec (number, optional): SIGTERM grace period in seconds (default: 10)
+- promptTemplate (string, optional): prompt template with {{agent.id}} and {{agent.name}} placeholders
 - extraArgs (string[], optional): additional CLI flags
 `;
 

@@ -35,6 +35,11 @@ describe('parseCopilotStreamJson', () => {
     expect(result.premiumRequests).toBe(6);
   });
 
+  it('extracts session duration from usage', () => {
+    const result = parseCopilotStreamJson(SAMPLE_STREAM);
+    expect(result.sessionDurationMs).toBe(14203);
+  });
+
   it('extracts code changes', () => {
     const result = parseCopilotStreamJson(SAMPLE_STREAM);
     expect(result.codeChanges.linesAdded).toBe(3);
@@ -42,11 +47,11 @@ describe('parseCopilotStreamJson', () => {
     expect(result.codeChanges.filesModified).toEqual(['src/auth.ts']);
   });
 
-  it('maps usage to UsageSummary', () => {
+  it('maps premiumRequests directly to inputTokens without fabrication', () => {
     const result = parseCopilotStreamJson(SAMPLE_STREAM);
     expect(result.usage).not.toBeNull();
-    expect(result.usage!.inputTokens).toBe(6000);
-    expect(result.usage!.outputTokens).toBe(4049);
+    expect(result.usage!.inputTokens).toBe(6);
+    expect(result.usage!.outputTokens).toBe(0);
   });
 
   it('stores result event as resultJson', () => {
@@ -61,6 +66,7 @@ describe('parseCopilotStreamJson', () => {
     expect(result.summary).toBe('');
     expect(result.usage).toBeNull();
     expect(result.premiumRequests).toBe(0);
+    expect(result.sessionDurationMs).toBe(0);
   });
 
   it('handles malformed lines without crashing', () => {
@@ -69,9 +75,44 @@ describe('parseCopilotStreamJson', () => {
     expect(result.sessionId).toBe('x');
   });
 
-  it('captures error events', () => {
+  it('captures error from data.message', () => {
     const output = '{"type":"error","data":{"message":"Rate limited"}}\n';
     const result = parseCopilotStreamJson(output);
     expect(result.errorMessage).toBe('Rate limited');
+  });
+
+  it('falls back to data.error when data.message is absent', () => {
+    const output = '{"type":"error","data":{"error":"Quota exceeded"}}\n';
+    const result = parseCopilotStreamJson(output);
+    expect(result.errorMessage).toBe('Quota exceeded');
+  });
+
+  it('extracts sessionId from assistant.message when result has none', () => {
+    const output = [
+      '{"type":"assistant.message","sessionId":"from-msg","data":{"content":"hello"}}',
+    ].join('\n');
+    const result = parseCopilotStreamJson(output);
+    expect(result.sessionId).toBe('from-msg');
+  });
+
+  it('result sessionId overrides earlier assistant.message sessionId', () => {
+    const output = [
+      '{"type":"assistant.message","sessionId":"old-id","data":{"content":"hello"}}',
+      '{"type":"result","sessionId":"final-id"}',
+    ].join('\n');
+    const result = parseCopilotStreamJson(output);
+    expect(result.sessionId).toBe('final-id');
+  });
+
+  it('returns default code changes when usage has no codeChanges', () => {
+    const output = '{"type":"result","sessionId":"x","usage":{"premiumRequests":1}}\n';
+    const result = parseCopilotStreamJson(output);
+    expect(result.codeChanges).toEqual({ linesAdded: 0, linesRemoved: 0, filesModified: [] });
+  });
+
+  it('ignores non-object JSON lines', () => {
+    const output = '"just a string"\n42\n[1,2,3]\n{"type":"result","sessionId":"ok"}\n';
+    const result = parseCopilotStreamJson(output);
+    expect(result.sessionId).toBe('ok');
   });
 });
