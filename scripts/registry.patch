@@ -1,3 +1,15 @@
+diff --git a/packages/shared/src/constants.ts b/packages/shared/src/constants.ts
+index e385aca5..d268cfe9 100644
+--- a/packages/shared/src/constants.ts
++++ b/packages/shared/src/constants.ts
+@@ -32,6 +32,7 @@ export const AGENT_ADAPTER_TYPES = [
+   "cursor",
+   "openclaw_gateway",
+   "hermes_local",
++  "copilot_local",
+ ] as const;
+ export type AgentAdapterType = (typeof AGENT_ADAPTER_TYPES)[number];
+ 
 diff --git a/server/src/adapters/registry.ts b/server/src/adapters/registry.ts
 index 1f195f86..3bcaf41c 100644
 --- a/server/src/adapters/registry.ts
@@ -40,3 +52,15 @@ index 1f195f86..3bcaf41c 100644
      processAdapter,
      httpAdapter,
    ].map((a) => [a.type, a]),
+diff --git a/ui/src/components/AgentProperties.tsx b/ui/src/components/AgentProperties.tsx
+index a89d8fb6..62b3d8fb 100644
+--- a/ui/src/components/AgentProperties.tsx
++++ b/ui/src/components/AgentProperties.tsx
+@@ -21,6 +21,7 @@ const adapterLabels: Record<string, string> = {
+   opencode_local: "OpenCode (local)",
+   openclaw_gateway: "OpenClaw Gateway",
+   cursor: "Cursor (local)",
++  copilot_local: "Copilot CLI (local)",
+   process: "Process",
+   http: "HTTP",
+ };
